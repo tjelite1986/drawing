@@ -426,6 +426,8 @@ fun DrawingScreen() {
     var showGrid        by remember { mutableStateOf(false) }
     var showGridPanel   by remember { mutableStateOf(false) }
     var toolbarExpanded by remember { mutableStateOf(false) }
+    var sidebarVisible  by remember { mutableStateOf(true) }
+    var topBarVisible   by remember { mutableStateOf(true) }
     var gridSpacing   by remember { mutableIntStateOf(60) }
 
     // Formförhandsvisning
@@ -1015,6 +1017,7 @@ fun DrawingScreen() {
     Column(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A2E))) {
 
         // Toprad
+        AnimatedVisibility(visible = topBarVisible, enter = expandVertically(), exit = shrinkVertically()) {
         Row(
             modifier = Modifier.fillMaxWidth().background(Color(0xFF16213E))
                 .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -1074,11 +1077,14 @@ fun DrawingScreen() {
                 TopBtn("Lager", if (showLayers) Color(0xFFFF9F43) else Color(0xFF546E7A)) { showLayers = !showLayers }
             }
         }
+        } // AnimatedVisibility topBar
 
         // Mitten: Verktygspanel + Canvas + Lagerpanel
         Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
 
             // Vänster verktygspanel
+            AnimatedVisibility(visible = sidebarVisible,
+                enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) {
             Column(
                 modifier = Modifier.width(56.dp).fillMaxHeight().background(Color(0xFF0F3460))
                     .padding(vertical = 6.dp),
@@ -1102,6 +1108,7 @@ fun DrawingScreen() {
                     }
                 }
             }
+            } // AnimatedVisibility sidebar
 
             // Canvas
             val baseModifier = Modifier.weight(1f).fillMaxHeight().background(backgroundColor)
@@ -1742,27 +1749,43 @@ fun DrawingScreen() {
 
         // Kontextuellt verktygsfält
         Column(modifier = Modifier.fillMaxWidth().background(Color(0xFF16213E))) {
-            // Toggle-knapp — alltid synlig
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF0F3460))
-                    .clickable { toolbarExpanded = !toolbarExpanded }
-                    .padding(vertical = 6.dp),
-                contentAlignment = Alignment.Center
+            // Alltid synlig kontrollrad
+            Row(
+                modifier = Modifier.fillMaxWidth().background(Color(0xFF0A1628)),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // Sidebar-toggle
+                Box(
+                    modifier = Modifier.size(44.dp)
+                        .background(if (sidebarVisible) Color(0xFF1A4080) else Color(0xFF0F3460))
+                        .clickable { sidebarVisible = !sidebarVisible },
+                    contentAlignment = Alignment.Center
+                ) { Text(if (sidebarVisible) "◀" else "▶", fontSize = 14.sp, color = Color.White) }
+
+                // Verktygsfält-toggle (mitten, tar resten av bredden)
+                Box(
+                    modifier = Modifier.weight(1f)
+                        .background(Color(0xFF0F3460))
+                        .clickable { toolbarExpanded = !toolbarExpanded }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(currentColor).border(1.5.dp, Color.White, CircleShape))
-                    Text(
-                        if (toolbarExpanded) "▼  Dölj verktyg" else "▲  Visa verktyg",
-                        fontSize = 13.sp,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(currentColor).border(1.5.dp, Color.White, CircleShape))
+                        Text(
+                            if (toolbarExpanded) "▼  Dölj verktyg" else "▲  Visa verktyg",
+                            fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
+
+                // Topbar-toggle
+                Box(
+                    modifier = Modifier.size(44.dp)
+                        .background(if (topBarVisible) Color(0xFF1A4080) else Color(0xFF0F3460))
+                        .clickable { topBarVisible = !topBarVisible },
+                    contentAlignment = Alignment.Center
+                ) { Text(if (topBarVisible) "▲" else "▼", fontSize = 14.sp, color = Color.White) }
             }
             AnimatedVisibility(visible = toolbarExpanded, enter = expandVertically(), exit = shrinkVertically()) {
             Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
