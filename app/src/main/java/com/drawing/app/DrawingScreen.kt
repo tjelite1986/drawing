@@ -425,7 +425,7 @@ fun DrawingScreen() {
     // Rutnät
     var showGrid        by remember { mutableStateOf(false) }
     var showGridPanel   by remember { mutableStateOf(false) }
-    var toolbarExpanded by remember { mutableStateOf(true) }
+    var toolbarExpanded by remember { mutableStateOf(false) }
     var gridSpacing   by remember { mutableIntStateOf(60) }
 
     // Formförhandsvisning
@@ -1742,19 +1742,27 @@ fun DrawingScreen() {
 
         // Kontextuellt verktygsfält
         Column(modifier = Modifier.fillMaxWidth().background(Color(0xFF16213E))) {
-            // Handlerad — alltid synlig, klicka för att expandera/kollapsera
-            Row(
-                modifier = Modifier.fillMaxWidth()
+            // Toggle-knapp — alltid synlig
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF0F3460))
                     .clickable { toolbarExpanded = !toolbarExpanded }
-                    .padding(horizontal = 12.dp, vertical = 5.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(vertical = 6.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(currentColor).border(1.5.dp, Color.White, CircleShape))
-                    ColorRow(colorPalettes[selectedPalette] ?: kidColors, currentColor) { currentColor = it }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(currentColor).border(1.5.dp, Color.White, CircleShape))
+                    Text(
+                        if (toolbarExpanded) "▼  Dölj verktyg" else "▲  Visa verktyg",
+                        fontSize = 13.sp,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
-                Text(if (toolbarExpanded) "▼" else "▲", fontSize = 11.sp, color = Color(0xFFAAAAAA))
             }
             AnimatedVisibility(visible = toolbarExpanded, enter = expandVertically(), exit = shrinkVertically()) {
             Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
