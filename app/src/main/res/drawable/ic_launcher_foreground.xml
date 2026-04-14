@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Palett-form -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="
+          M54,18
+          C36,18 22,31 22,48
+          C22,58 27,66 35,72
+          L35,74 C35,76 37,78 39,78
+          L45,78
+          C45,78 48,86 54,86
+          C60,86 63,78 63,78
+          L69,78 C71,78 73,76 73,74
+          L73,72 C81,66 86,58 86,48
+          C86,31 72,18 54,18 Z"/>
+
+    <!-- Tumhål -->
+    <path
+        android:fillColor="#FF9F43"
+        android:pathData="M54,70 C50,70 47,73 47,77 C47,81 50,84 54,84 C58,84 61,81 61,77 C61,73 58,70 54,70 Z"/>
+
+    <!-- Färgpunkter på paletten -->
+    <!-- Röd -->
+    <path
+        android:fillColor="#FF4757"
+        android:pathData="M38,44 C38,40.7 40.7,38 44,38 C47.3,38 50,40.7 50,44 C50,47.3 47.3,50 44,50 C40.7,50 38,47.3 38,44 Z"/>
+    <!-- Gul -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M49,33 C49,29.7 51.7,27 55,27 C58.3,27 61,29.7 61,33 C61,36.3 58.3,39 55,39 C51.7,39 49,36.3 49,33 Z"/>
+    <!-- Grön -->
+    <path
+        android:fillColor="#0BE881"
+        android:pathData="M60,44 C60,40.7 62.7,38 66,38 C69.3,38 72,40.7 72,44 C72,47.3 69.3,50 66,50 C62.7,50 60,47.3 60,44 Z"/>
+    <!-- Blå -->
+    <path
+        android:fillColor="#54A0FF"
+        android:pathData="M60,58 C60,54.7 62.7,52 66,52 C69.3,52 72,54.7 72,58 C72,61.3 69.3,64 66,64 C62.7,64 60,61.3 60,58 Z"/>
+    <!-- Orange -->
+    <path
+        android:fillColor="#FF6B81"
+        android:pathData="M38,58 C38,54.7 40.7,52 44,52 C47.3,52 50,54.7 50,58 C50,61.3 47.3,64 44,64 C40.7,64 38,61.3 38,58 Z"/>
+</vector>
