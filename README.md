@@ -1,48 +1,48 @@
 # Drawing App
 
-Android ritapp byggd med Kotlin och Jetpack Compose.
+Android drawing app built with Kotlin and Jetpack Compose.
 
-## Funktioner
+## Features
 
-### Ritverktyg
-- Penna, spray, former, fyll, text, stämpel, eyedropper, markering
-- Dodge, burn, smudge, partiklar, radergummi
+### Drawing Tools
+- Pen, spray, shapes, fill, text, stamp, eyedropper, selection
+- Dodge, burn, smudge, particles, eraser
 
-### Penseltyper
+### Brush Types
 Normal, neon, marker, rainbow, stipple, chalk, watercolor, flat
 
-### Former
-Linje, rektangel, cirkel, triangel, stjärna, pil, hexagon
+### Shapes
+Line, rectangle, circle, triangle, star, arrow, hexagon
 
-### Lager
-- Flera lager med blend modes: multiply, screen, overlay, darken, lighten
-- Visa/dölj lager, byt ordning
+### Layers
+- Multiple layers with blend modes: multiply, screen, overlay, darken, lighten
+- Show/hide layers, reorder
 
-### Emoji-objekt
-- Interaktiva objekt ovanpå lagren
-- Flytta, ändra storlek, dupliera, baka in i lager
-- Smart guides vid inriktning
+### Emoji Objects
+- Interactive objects floating above layers
+- Move, resize, duplicate, merge into layer
+- Smart guides for alignment
 
-### Filter
-Kontrast, ljusstyrka, mättnad, oskärpa, skärpa, brus, vinjett, färgton-shift, invertera, gråskala
+### Filters
+Contrast, brightness, saturation, blur, sharpen, noise, vignette, hue shift, invert, grayscale
 
-### Övrigt
-- Canvas-texturer: canvas, papper, kraft
-- Grid med justerbar storlek
-- Ångra/gör om (undo/redo)
-- Spara till galleri
+### Other
+- Canvas textures: canvas, paper, kraft
+- Grid with adjustable size
+- Undo/redo
+- Save to gallery
 
-## Bygga
+## Build
 
 ```bash
-export ANDROID_HOME=/home/thomas/android-sdk
-export ANDROID_SDK_ROOT=/home/thomas/android-sdk
+export ANDROID_HOME=/path/to/android-sdk
+export ANDROID_SDK_ROOT=/path/to/android-sdk
 ./gradlew assembleDebug
 ```
 
-APK hamnar i `app/build/outputs/apk/debug/app-debug.apk`.
+APK output: `app/build/outputs/apk/debug/app-debug.apk`
 
-## Krav
+## Requirements
 
 - Android API 26+
-- Android Studio eller Gradle 8.6+
+- Gradle 8.6+
