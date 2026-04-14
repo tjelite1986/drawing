@@ -11,6 +11,8 @@ import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
@@ -421,8 +423,9 @@ fun DrawingScreen() {
     var guideY         by remember { mutableStateOf<Float?>(null) }
 
     // Rutnät
-    var showGrid      by remember { mutableStateOf(false) }
-    var showGridPanel by remember { mutableStateOf(false) }
+    var showGrid        by remember { mutableStateOf(false) }
+    var showGridPanel   by remember { mutableStateOf(false) }
+    var toolbarExpanded by remember { mutableStateOf(true) }
     var gridSpacing   by remember { mutableIntStateOf(60) }
 
     // Formförhandsvisning
@@ -1738,7 +1741,23 @@ fun DrawingScreen() {
         }
 
         // Kontextuellt verktygsfält
-        Box(modifier = Modifier.fillMaxWidth().background(Color(0xFF16213E)).padding(horizontal = 10.dp, vertical = 8.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().background(Color(0xFF16213E))) {
+            // Handlerad — alltid synlig, klicka för att expandera/kollapsera
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .clickable { toolbarExpanded = !toolbarExpanded }
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(currentColor).border(1.5.dp, Color.White, CircleShape))
+                    ColorRow(colorPalettes[selectedPalette] ?: kidColors, currentColor) { currentColor = it }
+                }
+                Text(if (toolbarExpanded) "▼" else "▲", fontSize = 11.sp, color = Color(0xFFAAAAAA))
+            }
+            AnimatedVisibility(visible = toolbarExpanded, enter = expandVertically(), exit = shrinkVertically()) {
+            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
             when (drawMode) {
 
                 DrawMode.DRAW, DrawMode.ERASE -> {
@@ -2157,6 +2176,8 @@ fun DrawingScreen() {
                 }
             }
         }
+        } // AnimatedVisibility
+        } // Column toolbar
     }
 }
 
