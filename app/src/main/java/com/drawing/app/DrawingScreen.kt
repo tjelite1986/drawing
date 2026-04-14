@@ -2,14 +2,18 @@ package com.drawing.app
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.graphics.Paint as AndroidPaint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
+import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -65,7 +69,8 @@ private data class DrawnShape(
     val color: Color, val strokeWidth: Float, val filled: Boolean
 )
 private data class SpraySession(val dots: List<Offset>, val color: Color, val dotRadius: Float)
-private data class TextStamp(val text: String, val x: Float, val y: Float, val color: Color, val fontSize: Float)
+private enum class TextStyleOption { NORMAL, BOLD, ITALIC, MONO }
+private data class TextStamp(val text: String, val x: Float, val y: Float, val color: Color, val fontSize: Float, val style: TextStyleOption = TextStyleOption.NORMAL)
 
 private sealed class DrawAction {
     data class PathAction(val path: DrawnPath)                              : DrawAction()
@@ -90,9 +95,9 @@ private data class EmojiObject(
     val x: Float, val y: Float, val size: Float = 80f
 )
 
-private enum class DrawMode { DRAW, SPRAY, SHAPE, FILL, TEXT, STAMP, EYEDROPPER, SELECTION, DODGE, BURN, SMUDGE, PARTICLE, ERASE }
+private enum class DrawMode { DRAW, SPRAY, SHAPE, FILL, TEXT, STAMP, EYEDROPPER, SELECTION, DODGE, BURN, SMUDGE, PARTICLE, ERASE, ANIMATION }
 private enum class ObjDragMode { MOVE, RESIZE }
-private enum class ShapeType { LINE, RECT, CIRCLE, TRIANGLE, STAR, ARROW, HEXAGON }
+private enum class ShapeType { LINE, RECT, CIRCLE, TRIANGLE, STAR, ARROW, HEXAGON, PENTAGON }
 private enum class SelState  { NONE, DRAWING, CAPTURED }
 private enum class BrushType { NORMAL, NEON, MARKER, RAINBOW, STIPPLE, CHALK, WATERCOLOR, FLAT }
 private enum class TextureMode { NONE, CANVAS, PAPER, KRAFT }
@@ -205,6 +210,7 @@ private val toolList = listOf(
     DrawMode.SMUDGE     to "👆",
     DrawMode.PARTICLE   to "✨",
     DrawMode.ERASE      to "🧹",
+    DrawMode.ANIMATION  to "🎞",
 )
 
 // =============================================================================
@@ -428,7 +434,42 @@ fun DrawingScreen() {
     var toolbarExpanded by remember { mutableStateOf(false) }
     var sidebarVisible  by remember { mutableStateOf(true) }
     var topBarVisible   by remember { mutableStateOf(true) }
-    var gridSpacing   by remember { mutableIntStateOf(60) }
+    var gridSpacing     by remember { mutableIntStateOf(60) }
+
+    // Zoom & pan
+    var zoomScale      by remember { mutableFloatStateOf(1f) }
+    var zoomOffX       by remember { mutableFloatStateOf(0f) }
+    var zoomOffY       by remember { mutableFloatStateOf(0f) }
+    var prevPinchDist  by remember { mutableFloatStateOf(0f) }
+    var prevPinchMidX  by remember { mutableFloatStateOf(0f) }
+    var prevPinchMidY  by remember { mutableFloatStateOf(0f) }
+
+    // Import bild
+    var pendingImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
+
+    // Spara/ladda projekt
+    var showSaveProjectDialog by remember { mutableStateOf(false) }
+    var showLoadProjectDialog by remember { mutableStateOf(false) }
+    var projectName           by remember { mutableStateOf("") }
+    var savedProjects         by remember { mutableStateOf(listOf<String>()) }
+
+    // Export format
+    var showExportDialog by remember { mutableStateOf(false) }
+    var exportBitmap     by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+    // Tryckkänslighet
+    var pressureSensitive by remember { mutableStateOf(false) }
+    var lastPressure      by remember { mutableFloatStateOf(1f) }
+
+    // Text-stilar
+    var textStyle by remember { mutableStateOf(TextStyleOption.NORMAL) }
+
+    // Animering
+    val animFrames  = remember { mutableStateListOf<android.graphics.Bitmap>() }
+    var animFrame   by remember { mutableIntStateOf(0) }
+    var animPlaying by remember { mutableStateOf(false) }
+    var animFps     by remember { mutableIntStateOf(8) }
+    var showOnion   by remember { mutableStateOf(true) }
 
     // Formförhandsvisning
     var shapeStart by remember { mutableStateOf<Offset?>(null) }
@@ -472,6 +513,11 @@ fun DrawingScreen() {
     var customA by remember { mutableFloatStateOf(255f) }
 
     val activity = context as? androidx.activity.ComponentActivity
+
+    // Bildimport-launcher (måste vara på composable-toppnivå)
+    val imageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        pendingImportUri = uri
+    }
 
     // =========================================================================
     // Hjälpfunktioner
@@ -622,6 +668,18 @@ fun DrawingScreen() {
         return path
     }
 
+    fun buildPentagonPath(start: Offset, end: Offset): android.graphics.Path {
+        val cx = (start.x + end.x) / 2f; val cy = (start.y + end.y) / 2f
+        val r = min(abs(end.x - start.x), abs(end.y - start.y)) / 2f
+        val path = android.graphics.Path()
+        for (i in 0 until 5) {
+            val angle = Math.toRadians((i * 72.0 - 90.0))
+            val x = cx + r * cos(angle).toFloat(); val y = cy + r * sin(angle).toFloat()
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        path.close(); return path
+    }
+
     fun drawShapeOnCanvas(shape: DrawnShape, c: android.graphics.Canvas) {
         val paint = AndroidPaint().apply {
             color = shape.color.toArgb()
@@ -672,6 +730,7 @@ fun DrawingScreen() {
                 }
                 c.drawPath(hexPath, paint)
             }
+            ShapeType.PENTAGON -> c.drawPath(buildPentagonPath(shape.start, shape.end), paint)
         }
     }
 
@@ -693,7 +752,15 @@ fun DrawingScreen() {
             }
             is DrawAction.FillAction  -> floodFill(bmp, action.x, action.y, action.newColor.toArgb())
             is DrawAction.TextAction  -> {
-                val paint = AndroidPaint().apply { color = action.stamp.color.toArgb(); textSize = action.stamp.fontSize; isAntiAlias = true }
+                val paint = AndroidPaint().apply {
+                    color = action.stamp.color.toArgb(); textSize = action.stamp.fontSize; isAntiAlias = true
+                    typeface = when (action.stamp.style) {
+                        TextStyleOption.BOLD   -> android.graphics.Typeface.DEFAULT_BOLD
+                        TextStyleOption.ITALIC -> android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.ITALIC)
+                        TextStyleOption.MONO   -> android.graphics.Typeface.MONOSPACE
+                        TextStyleOption.NORMAL -> android.graphics.Typeface.DEFAULT
+                    }
+                }
                 c.drawText(action.stamp.text, action.stamp.x, action.stamp.y, paint)
             }
         }
@@ -783,6 +850,65 @@ fun DrawingScreen() {
     // Effektiv färg med opacitet
     fun effectiveColor(): Color = currentColor.copy(alpha = currentColor.alpha * opacity)
 
+    // Projekt-funktioner
+    fun saveProject(name: String) {
+        if (name.isBlank()) return
+        val dir = java.io.File(context.filesDir, "projects/$name").also { it.mkdirs() }
+        layers.forEachIndexed { i, layer ->
+            layer.bitmap?.let { bmp ->
+                java.io.FileOutputStream(java.io.File(dir, "layer_$i.png")).use {
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                }
+            }
+        }
+        java.io.File(dir, "manifest.txt").writeText(
+            layers.mapIndexed { i, l -> "$i|${l.name}|${l.visible}|${l.blendMode.name}" }.joinToString("\n")
+        )
+        Toast.makeText(context, "Projekt sparat: $name", Toast.LENGTH_SHORT).show()
+    }
+    fun loadProject(name: String) {
+        val dir = java.io.File(context.filesDir, "projects/$name"); if (!dir.exists()) return
+        val manifest = try { java.io.File(dir, "manifest.txt").readLines() } catch (e: Exception) { return }
+        val newLayers = manifest.mapIndexedNotNull { i, line ->
+            val parts = line.split("|"); if (parts.size < 4) return@mapIndexedNotNull null
+            val bmpFile = java.io.File(dir, "layer_$i.png")
+            val bmp = if (bmpFile.exists()) BitmapFactory.decodeFile(bmpFile.absolutePath)?.copy(android.graphics.Bitmap.Config.ARGB_8888, true) else null
+            Layer(id = i, name = parts[1], bitmap = bmp, visible = parts[2] == "true",
+                blendMode = try { PorterDuff.Mode.valueOf(parts[3]) } catch (e: Exception) { PorterDuff.Mode.SRC_OVER })
+        }
+        if (newLayers.isNotEmpty()) {
+            layers.clear(); layers.addAll(newLayers)
+            nextLayerId = newLayers.size; activeLayerId = newLayers.last().id
+            compositeAllLayers()
+        }
+    }
+    fun listProjects(): List<String> = java.io.File(context.filesDir, "projects").let {
+        if (it.exists()) it.list()?.sorted() ?: emptyList() else emptyList()
+    }
+
+    // Animeringsloop
+    LaunchedEffect(animPlaying, animFps) {
+        while (animPlaying) {
+            kotlinx.coroutines.delay(1000L / animFps)
+            if (animFrames.isNotEmpty()) animFrame = (animFrame + 1) % animFrames.size
+        }
+    }
+
+    // Import bild när canvas är redo
+    LaunchedEffect(pendingImportUri, canvasWidth, canvasHeight) {
+        val uri = pendingImportUri ?: return@LaunchedEffect
+        if (canvasWidth == 0 || canvasHeight == 0) return@LaunchedEffect
+        val src = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+        if (src != null) {
+            val scaled = android.graphics.Bitmap.createScaledBitmap(src, canvasWidth, canvasHeight, true)
+                .copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+            val newId = nextLayerId++
+            layers.add(Layer(id = newId, name = "Importerad", bitmap = scaled))
+            activeLayerId = newId; compositeAllLayers()
+        }
+        pendingImportUri = null
+    }
+
     LaunchedEffect(backgroundColor) { compositeAllLayers() }
 
     // =========================================================================
@@ -834,14 +960,31 @@ fun DrawingScreen() {
                         label = { Text("Text") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Text("Storlek: ${textFontSize.toInt()} px", fontSize = 12.sp, color = Color.Gray)
                     Slider(value = textFontSize, onValueChange = { textFontSize = it }, valueRange = 24f..200f)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(TextStyleOption.NORMAL to "Normal", TextStyleOption.BOLD to "B",
+                               TextStyleOption.ITALIC to "I", TextStyleOption.MONO to "Mono").forEach { (s, lbl) ->
+                            Box(modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                                .background(if (textStyle == s) Color(0xFF5F27CD) else Color(0xFF546E7A))
+                                .clickable { textStyle = s }.padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) { Text(lbl, fontSize = 12.sp, color = Color.White) }
+                        }
+                    }
                 }
             },
             confirmButton = {
                 Button(onClick = {
                     if (textInput.isNotBlank()) {
-                        val stamp = TextStamp(textInput, pendingTextPos.x, pendingTextPos.y, currentColor, textFontSize)
+                        val stamp = TextStamp(textInput, pendingTextPos.x, pendingTextPos.y, currentColor, textFontSize, textStyle)
                         addActionToActiveLayer(DrawAction.TextAction(stamp)) { _, c ->
-                            val paint = AndroidPaint().apply { color = stamp.color.toArgb(); textSize = stamp.fontSize; isAntiAlias = true }
+                            val paint = AndroidPaint().apply {
+                                color = stamp.color.toArgb(); textSize = stamp.fontSize; isAntiAlias = true
+                                typeface = when (stamp.style) {
+                                    TextStyleOption.BOLD   -> android.graphics.Typeface.DEFAULT_BOLD
+                                    TextStyleOption.ITALIC -> android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.ITALIC)
+                                    TextStyleOption.MONO   -> android.graphics.Typeface.MONOSPACE
+                                    TextStyleOption.NORMAL -> android.graphics.Typeface.DEFAULT
+                                }
+                            }
                             c.drawText(stamp.text, stamp.x, stamp.y, paint)
                         }
                     }
@@ -1010,6 +1153,61 @@ fun DrawingScreen() {
         )
     }
 
+    // Export-dialog
+    if (showExportDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            title = { Text("Exportera som...") },
+            text  = { Text("Välj filformat för att spara ritningen.") },
+            confirmButton = {
+                Button(onClick = { saveToGallery(context, exportBitmap); showExportDialog = false }) { Text("PNG") }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { showExportDialog = false }) { Text("Avbryt") }
+                    Button(onClick = { saveToGalleryJpg(context, exportBitmap); showExportDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF546E7A))
+                    ) { Text("JPG") }
+                }
+            }
+        )
+    }
+
+    // Spara-projekt-dialog
+    if (showSaveProjectDialog) {
+        AlertDialog(
+            onDismissRequest = { showSaveProjectDialog = false },
+            title = { Text("Spara projekt") },
+            text = {
+                OutlinedTextField(value = projectName, onValueChange = { projectName = it },
+                    label = { Text("Projektnamn") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            },
+            confirmButton = {
+                Button(onClick = { saveProject(projectName); showSaveProjectDialog = false }) { Text("Spara") }
+            },
+            dismissButton = { TextButton(onClick = { showSaveProjectDialog = false }) { Text("Avbryt") } }
+        )
+    }
+
+    // Öppna-projekt-dialog
+    if (showLoadProjectDialog) {
+        AlertDialog(
+            onDismissRequest = { showLoadProjectDialog = false },
+            title = { Text("Öppna projekt") },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    if (savedProjects.isEmpty()) Text("Inga sparade projekt", color = Color.Gray)
+                    else savedProjects.forEach { name ->
+                        TextButton(onClick = { loadProject(name); showLoadProjectDialog = false },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(name) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showLoadProjectDialog = false }) { Text("Stäng") } }
+        )
+    }
+
     // =========================================================================
     // Layout
     // =========================================================================
@@ -1060,7 +1258,7 @@ fun DrawingScreen() {
                 }
                 TopBtn("Spara", Color(0xFF0BE881)) {
                     val base = cachedBitmap
-                    if (base != null && emojiObjects.isNotEmpty()) {
+                    exportBitmap = if (base != null && emojiObjects.isNotEmpty()) {
                         val merged = android.graphics.Bitmap.createBitmap(base.width, base.height, android.graphics.Bitmap.Config.ARGB_8888)
                         val mc = android.graphics.Canvas(merged)
                         mc.drawBitmap(base, 0f, 0f, null)
@@ -1068,11 +1266,16 @@ fun DrawingScreen() {
                             mc.drawText(obj.emoji, obj.x, obj.y + obj.size / 3f,
                                 AndroidPaint().apply { textSize = obj.size; textAlign = AndroidPaint.Align.CENTER; isAntiAlias = true })
                         }
-                        saveToGallery(context, merged)
-                    } else {
-                        saveToGallery(context, base)
-                    }
+                        merged
+                    } else base
+                    showExportDialog = true
                 }
+                TopBtn("Import", Color(0xFF546E7A)) { imageLauncher.launch("image/*") }
+                TopBtn("⊕Zoom", if (zoomScale != 1f) Color(0xFFFF9F43) else Color(0xFF546E7A)) {
+                    zoomScale = 1f; zoomOffX = 0f; zoomOffY = 0f; renderTick++
+                }
+                TopBtn("Proj+", Color(0xFF546E7A)) { projectName = ""; showSaveProjectDialog = true }
+                TopBtn("Proj↑", Color(0xFF546E7A)) { savedProjects = listProjects(); showLoadProjectDialog = true }
                 TopBtn("Rensa", Color(0xFFFF9F43)) { showClearDialog = true }
                 TopBtn("Lager", if (showLayers) Color(0xFFFF9F43) else Color(0xFF546E7A)) { showLayers = !showLayers }
             }
@@ -1128,6 +1331,35 @@ fun DrawingScreen() {
                 }
 
             val gestureModifier = baseModifier.pointerInteropFilter { event ->
+                // Zoom & pan med två fingrar
+                if (event.pointerCount >= 2) {
+                    val dx = event.getX(0) - event.getX(1); val dy = event.getY(0) - event.getY(1)
+                    val dist = sqrt(dx*dx + dy*dy)
+                    val midX = (event.getX(0) + event.getX(1)) / 2f
+                    val midY = (event.getY(0) + event.getY(1)) / 2f
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_POINTER_DOWN -> { prevPinchDist = dist; prevPinchMidX = midX; prevPinchMidY = midY }
+                        MotionEvent.ACTION_MOVE -> {
+                            if (prevPinchDist > 0f) {
+                                val scaleFactor = dist / prevPinchDist
+                                val newScale = (zoomScale * scaleFactor).coerceIn(0.5f, 8f)
+                                zoomOffX += (midX - prevPinchMidX)
+                                zoomOffY += (midY - prevPinchMidY)
+                                zoomOffX = midX - (midX - zoomOffX) * (newScale / zoomScale)
+                                zoomOffY = midY - (midY - zoomOffY) * (newScale / zoomScale)
+                                zoomScale = newScale
+                                prevPinchDist = dist; prevPinchMidX = midX; prevPinchMidY = midY
+                                renderTick++
+                            }
+                        }
+                        MotionEvent.ACTION_POINTER_UP -> { prevPinchDist = 0f }
+                    }
+                    return@pointerInteropFilter true
+                }
+                // Koordinattransform för zoom
+                fun ex(raw: Float) = (raw - zoomOffX) / zoomScale
+                fun ey(raw: Float) = (raw - zoomOffY) / zoomScale
+
                 when (drawMode) {
 
                     DrawMode.STAMP -> {
@@ -1159,29 +1391,22 @@ fun DrawingScreen() {
 
                         when (event.action and MotionEvent.ACTION_MASK) {
                             MotionEvent.ACTION_DOWN -> {
-                                // Check resize handle on selected object first
                                 if (curSelObj != null) {
                                     val half = curSelObj.size / 2f
                                     val hx = curSelObj.x + half; val hy = curSelObj.y + half
-                                    val dist = sqrt((event.x - hx) * (event.x - hx) + (event.y - hy) * (event.y - hy))
+                                    val ex0 = ex(event.x); val ey0 = ey(event.y)
+                                    val dist = sqrt((ex0 - hx) * (ex0 - hx) + (ey0 - hy) * (ey0 - hy))
                                     if (dist < HANDLE_R) {
                                         objDragMode = ObjDragMode.RESIZE
-                                        objDragPrev = Offset(event.x, event.y)
-                                        renderTick++
-                                        return@pointerInteropFilter true
+                                        objDragPrev = Offset(ex0, ey0)
+                                        renderTick++; return@pointerInteropFilter true
                                     }
                                 }
-                                // Check hit on any object (last = topmost)
-                                val hit = emojiObjects.lastOrNull { objHalfHit(it, event.x, event.y) }
+                                val hit = emojiObjects.lastOrNull { objHalfHit(it, ex(event.x), ey(event.y)) }
                                 if (hit != null) {
-                                    selectedObjId = hit.id
-                                    objDragMode = ObjDragMode.MOVE
-                                    objDragPrev = Offset(event.x, event.y)
-                                } else {
-                                    selectedObjId = null
-                                    objDragMode = null
-                                    objDragPrev = null
-                                }
+                                    selectedObjId = hit.id; objDragMode = ObjDragMode.MOVE
+                                    objDragPrev = Offset(ex(event.x), ey(event.y))
+                                } else { selectedObjId = null; objDragMode = null; objDragPrev = null }
                                 renderTick++
                             }
                             MotionEvent.ACTION_MOVE -> {
@@ -1191,8 +1416,8 @@ fun DrawingScreen() {
                                     val obj = emojiObjects[selIdx]
                                     when (objDragMode) {
                                         ObjDragMode.MOVE -> {
-                                            var nx = obj.x + (event.x - prev.x)
-                                            var ny = obj.y + (event.y - prev.y)
+                                            var nx = obj.x + (ex(event.x) - prev.x)
+                                            var ny = obj.y + (ey(event.y) - prev.y)
                                             val temp = obj.copy(x = nx, y = ny)
                                             computeGuides(temp)
                                             if (guideX != null && abs(nx - guideX!!) < SNAP) nx = guideX!!
@@ -1200,25 +1425,21 @@ fun DrawingScreen() {
                                             emojiObjects[selIdx] = obj.copy(x = nx, y = ny)
                                         }
                                         ObjDragMode.RESIZE -> {
-                                            val delta = (event.x - prev.x + event.y - prev.y) / 2f
+                                            val delta = (ex(event.x) - prev.x + ey(event.y) - prev.y) / 2f
                                             emojiObjects[selIdx] = obj.copy(size = (obj.size + delta * 1.4f).coerceIn(20f, 500f))
                                         }
                                         null -> {}
                                     }
-                                    objDragPrev = Offset(event.x, event.y)
+                                    objDragPrev = Offset(ex(event.x), ey(event.y))
                                 }
                                 renderTick++
                             }
                             MotionEvent.ACTION_UP -> {
                                 if (objDragMode == null && selectedObjId == null) {
-                                    // Place new emoji object at tap position
-                                    val newObj = EmojiObject(nextObjId++, selectedStamp, event.x, event.y)
-                                    emojiObjects.add(newObj)
-                                    selectedObjId = newObj.id
+                                    val newObj = EmojiObject(nextObjId++, selectedStamp, ex(event.x), ey(event.y))
+                                    emojiObjects.add(newObj); selectedObjId = newObj.id
                                 }
-                                objDragMode = null
-                                guideX = null; guideY = null
-                                renderTick++
+                                objDragMode = null; guideX = null; guideY = null; renderTick++
                             }
                         }; true
                     }
@@ -1229,23 +1450,23 @@ fun DrawingScreen() {
                             if (idx >= 0) {
                                 ensureLayerBmp(idx)
                                 val bmp = layers[idx].bitmap ?: return@pointerInteropFilter true
-                                val cx = event.x.toInt().coerceIn(0, bmp.width-1)
-                                val cy = event.y.toInt().coerceIn(0, bmp.height-1)
+                                val cx = ex(event.x).toInt().coerceIn(0, bmp.width-1)
+                                val cy = ey(event.y).toInt().coerceIn(0, bmp.height-1)
                                 addActionToActiveLayer(DrawAction.FillAction(cx, cy, currentColor)) { b, _ -> floodFill(b, cx, cy, currentColor.toArgb()) }
                             }
                         }; true
                     }
 
                     DrawMode.TEXT -> {
-                        if (event.action == MotionEvent.ACTION_UP) { pendingTextPos = Offset(event.x, event.y); showTextDialog = true }; true
+                        if (event.action == MotionEvent.ACTION_UP) { pendingTextPos = Offset(ex(event.x), ey(event.y)); showTextDialog = true }; true
                     }
 
                     DrawMode.EYEDROPPER -> {
                         if (event.action == MotionEvent.ACTION_UP) {
                             val bmp = cachedBitmap
                             if (bmp != null) {
-                                val px = event.x.toInt().coerceIn(0, bmp.width-1)
-                                val py = event.y.toInt().coerceIn(0, bmp.height-1)
+                                val px = ex(event.x).toInt().coerceIn(0, bmp.width-1)
+                                val py = ey(event.y).toInt().coerceIn(0, bmp.height-1)
                                 currentColor = Color(bmp.getPixel(px, py)); drawMode = DrawMode.DRAW
                             }
                         }; true
@@ -1255,19 +1476,19 @@ fun DrawingScreen() {
                         when (event.action and MotionEvent.ACTION_MASK) {
                             MotionEvent.ACTION_DOWN -> {
                                 if (selState == SelState.CAPTURED) {
-                                    selDragPrev = Offset(event.x, event.y)
+                                    selDragPrev = Offset(ex(event.x), ey(event.y))
                                 } else {
-                                    selRectStart = Offset(event.x, event.y); selRectEnd = selRectStart
+                                    selRectStart = Offset(ex(event.x), ey(event.y)); selRectEnd = selRectStart
                                     selState = SelState.DRAWING
                                 }
                             }
                             MotionEvent.ACTION_MOVE -> {
                                 if (selState == SelState.DRAWING) {
-                                    selRectEnd = Offset(event.x, event.y)
+                                    selRectEnd = Offset(ex(event.x), ey(event.y))
                                 } else if (selState == SelState.CAPTURED) {
                                     val prev = selDragPrev
-                                    if (prev != null) selOffset += Offset(event.x - prev.x, event.y - prev.y)
-                                    selDragPrev = Offset(event.x, event.y)
+                                    if (prev != null) selOffset += Offset(ex(event.x) - prev.x, ey(event.y) - prev.y)
+                                    selDragPrev = Offset(ex(event.x), ey(event.y))
                                 }
                                 renderTick++
                             }
@@ -1280,12 +1501,12 @@ fun DrawingScreen() {
 
                     DrawMode.SHAPE -> {
                         when (event.action and MotionEvent.ACTION_MASK) {
-                            MotionEvent.ACTION_DOWN -> { shapeStart = Offset(event.x, event.y); shapeEnd = shapeStart }
-                            MotionEvent.ACTION_MOVE -> { shapeEnd = Offset(event.x, event.y); renderTick++ }
+                            MotionEvent.ACTION_DOWN -> { shapeStart = Offset(ex(event.x), ey(event.y)); shapeEnd = shapeStart }
+                            MotionEvent.ACTION_MOVE -> { shapeEnd = Offset(ex(event.x), ey(event.y)); renderTick++ }
                             MotionEvent.ACTION_UP   -> {
                                 val s = shapeStart
                                 if (s != null) {
-                                    val shape = DrawnShape(selectedShape, s, Offset(event.x, event.y), effectiveColor(), brushSize, shapeFilled)
+                                    val shape = DrawnShape(selectedShape, s, Offset(ex(event.x), ey(event.y)), effectiveColor(), brushSize, shapeFilled)
                                     addActionToActiveLayer(DrawAction.ShapeAction(shape)) { _, c -> drawShapeOnCanvas(shape, c) }
                                 }
                                 shapeStart = null; shapeEnd = null; renderTick++
@@ -1304,10 +1525,10 @@ fun DrawingScreen() {
                             dots.forEach { c.drawCircle(it.x, it.y, 3f, paint) }
                         }
                         when (event.action and MotionEvent.ACTION_MASK) {
-                            MotionEvent.ACTION_DOWN -> { liveSprayDots.clear(); sprayAt(event.x, event.y); compositeAllLayers() }
+                            MotionEvent.ACTION_DOWN -> { liveSprayDots.clear(); sprayAt(ex(event.x), ey(event.y)); compositeAllLayers() }
                             MotionEvent.ACTION_MOVE -> {
-                                for (i in 0 until event.historySize) sprayAt(event.getHistoricalX(i), event.getHistoricalY(i))
-                                sprayAt(event.x, event.y); compositeAllLayers()
+                                for (i in 0 until event.historySize) sprayAt(ex(event.getHistoricalX(i)), ey(event.getHistoricalY(i)))
+                                sprayAt(ex(event.x), ey(event.y)); compositeAllLayers()
                             }
                             MotionEvent.ACTION_UP   -> {
                                 if (liveSprayDots.isNotEmpty() && idx >= 0) {
@@ -1328,35 +1549,29 @@ fun DrawingScreen() {
                                 ensureLayerBmp(idx)
                                 val bmp = layers[idx].bitmap ?: return@pointerInteropFilter true
                                 val c = android.graphics.Canvas(bmp)
+                                val px = ex(event.x); val py = ey(event.y)
                                 val numParticles = 28
                                 val burst = (0 until numParticles).map {
                                     val angle = it * (2f * PI.toFloat() / numParticles) + Random.nextFloat() * 0.4f
                                     val r = (0.3f + Random.nextFloat() * 0.7f) * brushSize * 2.5f
-                                    Offset(event.x + cos(angle) * r, event.y + sin(angle) * r)
+                                    Offset(px + cos(angle) * r, py + sin(angle) * r)
                                 }
-                                // Inner glow
                                 val innerBurst = (0 until numParticles / 2).map {
                                     val angle = Random.nextFloat() * 2f * PI.toFloat()
                                     val r = Random.nextFloat() * brushSize * 0.8f
-                                    Offset(event.x + cos(angle) * r, event.y + sin(angle) * r)
+                                    Offset(px + cos(angle) * r, py + sin(angle) * r)
                                 }
                                 val allDots = burst + innerBurst
                                 val col = if (brushType == BrushType.RAINBOW) rainbowColors.random() else effectiveColor()
                                 allDots.forEachIndexed { i, dot ->
-                                    val dotSize = if (i < numParticles) brushSize * (0.08f + Random.nextFloat() * 0.18f)
-                                                  else brushSize * 0.25f
-                                    val paint = AndroidPaint().apply {
-                                        color = col.copy(alpha = 0.5f + Random.nextFloat() * 0.5f).toArgb()
-                                        style = AndroidPaint.Style.FILL; isAntiAlias = true
-                                    }
+                                    val dotSize = if (i < numParticles) brushSize * (0.08f + Random.nextFloat() * 0.18f) else brushSize * 0.25f
+                                    val paint = AndroidPaint().apply { color = col.copy(alpha = 0.5f + Random.nextFloat() * 0.5f).toArgb(); style = AndroidPaint.Style.FILL; isAntiAlias = true }
                                     c.drawCircle(dot.x, dot.y, dotSize, paint)
                                 }
-                                // Spara som spray-action för undo
                                 val session = SpraySession(allDots, col, brushSize * 0.12f)
                                 layers[idx] = layers[idx].copy(actions = layers[idx].actions + DrawAction.SprayAction(session))
                                 globalHistory.add(activeLayerId to DrawAction.SprayAction(session))
-                                redoStack.clear()
-                                compositeAllLayers()
+                                redoStack.clear(); compositeAllLayers()
                             }
                         }; true
                     }
@@ -1364,13 +1579,10 @@ fun DrawingScreen() {
                     DrawMode.DODGE, DrawMode.BURN -> {
                         val col = if (drawMode == DrawMode.DODGE) Color(1f, 1f, 1f, 0.14f) else Color(0f, 0f, 0f, 0.14f)
                         when (event.action and MotionEvent.ACTION_MASK) {
-                            MotionEvent.ACTION_DOWN -> {
-                                livePoints.clear()
-                                livePoints.add(Offset(event.x, event.y)); renderTick++
-                            }
+                            MotionEvent.ACTION_DOWN -> { livePoints.clear(); livePoints.add(Offset(ex(event.x), ey(event.y))); renderTick++ }
                             MotionEvent.ACTION_MOVE -> {
-                                for (i in 0 until event.historySize) livePoints.add(Offset(event.getHistoricalX(i), event.getHistoricalY(i)))
-                                livePoints.add(Offset(event.x, event.y)); renderTick++
+                                for (i in 0 until event.historySize) livePoints.add(Offset(ex(event.getHistoricalX(i)), ey(event.getHistoricalY(i))))
+                                livePoints.add(Offset(ex(event.x), ey(event.y))); renderTick++
                             }
                             MotionEvent.ACTION_UP -> {
                                 if (livePoints.size >= 2) {
@@ -1399,10 +1611,10 @@ fun DrawingScreen() {
                             android.graphics.Canvas(bmp).drawBitmap(back, left.toFloat(), top.toFloat(), null)
                         }
                         when (event.action and MotionEvent.ACTION_MASK) {
-                            MotionEvent.ACTION_DOWN -> { smudgeAt(event.x, event.y); compositeAllLayers() }
+                            MotionEvent.ACTION_DOWN -> { smudgeAt(ex(event.x), ey(event.y)); compositeAllLayers() }
                             MotionEvent.ACTION_MOVE -> {
-                                for (i in 0 until event.historySize) smudgeAt(event.getHistoricalX(i), event.getHistoricalY(i))
-                                smudgeAt(event.x, event.y); compositeAllLayers()
+                                for (i in 0 until event.historySize) smudgeAt(ex(event.getHistoricalX(i)), ey(event.getHistoricalY(i)))
+                                smudgeAt(ex(event.x), ey(event.y)); compositeAllLayers()
                             }
                             MotionEvent.ACTION_UP -> {}
                         }; true
@@ -1413,22 +1625,25 @@ fun DrawingScreen() {
                         when (event.action and MotionEvent.ACTION_MASK) {
                             MotionEvent.ACTION_DOWN -> {
                                 livePoints.clear(); liveMirrorPoints.clear()
-                                livePoints.add(Offset(event.x, event.y))
-                                if (symmetryH && !isErase) liveMirrorPoints.add(Offset(canvasWidth - event.x, event.y))
+                                lastPressure = event.pressure.coerceIn(0.1f, 1.0f)
+                                livePoints.add(Offset(ex(event.x), ey(event.y)))
+                                if (symmetryH && !isErase) liveMirrorPoints.add(Offset(canvasWidth - ex(event.x), ey(event.y)))
                                 renderTick++
                             }
                             MotionEvent.ACTION_MOVE -> {
+                                lastPressure = event.pressure.coerceIn(0.1f, 1.0f)
                                 for (i in 0 until event.historySize) {
-                                    livePoints.add(Offset(event.getHistoricalX(i), event.getHistoricalY(i)))
-                                    if (symmetryH && !isErase) liveMirrorPoints.add(Offset(canvasWidth - event.getHistoricalX(i), event.getHistoricalY(i)))
+                                    livePoints.add(Offset(ex(event.getHistoricalX(i)), ey(event.getHistoricalY(i))))
+                                    if (symmetryH && !isErase) liveMirrorPoints.add(Offset(canvasWidth - ex(event.getHistoricalX(i)), ey(event.getHistoricalY(i))))
                                 }
-                                livePoints.add(Offset(event.x, event.y))
-                                if (symmetryH && !isErase) liveMirrorPoints.add(Offset(canvasWidth - event.x, event.y))
+                                livePoints.add(Offset(ex(event.x), ey(event.y)))
+                                if (symmetryH && !isErase) liveMirrorPoints.add(Offset(canvasWidth - ex(event.x), ey(event.y)))
                                 renderTick++
                             }
                             MotionEvent.ACTION_UP   -> {
                                 if (livePoints.size >= 2) {
-                                    val sw = if (isErase) brushSize * 2 else brushSize
+                                    val pressureScale = if (pressureSensitive && !isErase) lastPressure else 1f
+                                    val sw = (if (isErase) brushSize * 2 else brushSize) * pressureScale
                                     val col = when {
                                         isErase -> backgroundColor
                                         brushType == BrushType.RAINBOW -> rainbowColors.random()
@@ -1440,25 +1655,67 @@ fun DrawingScreen() {
                                         val mirrorDp = DrawnPath(buildSmoothPath(liveMirrorPoints), col, sw, false, brushType)
                                         val symAction = DrawAction.SymmetryPathAction(dp, mirrorDp)
                                         addActionToActiveLayer(symAction) { _, c ->
-                                            drawPathOnCanvas(dp, c)
-                                            drawPathOnCanvas(mirrorDp, c)
+                                            drawPathOnCanvas(dp, c); drawPathOnCanvas(mirrorDp, c)
                                         }
                                     } else {
-                                        addActionToActiveLayer(DrawAction.PathAction(dp)) { _, c ->
-                                            drawPathOnCanvas(dp, c)
-                                        }
+                                        addActionToActiveLayer(DrawAction.PathAction(dp)) { _, c -> drawPathOnCanvas(dp, c) }
                                     }
                                 }
                                 livePoints.clear(); liveMirrorPoints.clear(); renderTick++
                             }
                         }; true
                     }
+
+                    DrawMode.ANIMATION -> {
+                        if (animFrames.isEmpty() && canvasWidth > 0) {
+                            animFrames.add(android.graphics.Bitmap.createBitmap(canvasWidth, canvasHeight, android.graphics.Bitmap.Config.ARGB_8888))
+                        }
+                        val frameIdx = animFrame.coerceIn(0, (animFrames.size - 1).coerceAtLeast(0))
+                        if (animFrames.isEmpty()) return@pointerInteropFilter true
+                        val bmp = animFrames[frameIdx]
+                        val isErase = false
+                        when (event.action and MotionEvent.ACTION_MASK) {
+                            MotionEvent.ACTION_DOWN -> {
+                                livePoints.clear()
+                                livePoints.add(Offset(ex(event.x), ey(event.y))); renderTick++
+                            }
+                            MotionEvent.ACTION_MOVE -> {
+                                for (i in 0 until event.historySize) livePoints.add(Offset(ex(event.getHistoricalX(i)), ey(event.getHistoricalY(i))))
+                                livePoints.add(Offset(ex(event.x), ey(event.y))); renderTick++
+                            }
+                            MotionEvent.ACTION_UP -> {
+                                if (livePoints.size >= 2) {
+                                    val dp = DrawnPath(buildSmoothPath(livePoints), effectiveColor(), brushSize, false, brushType)
+                                    drawPathOnCanvas(dp, android.graphics.Canvas(bmp))
+                                }
+                                livePoints.clear(); renderTick++
+                            }
+                        }; true
+                    }
                 }
             }
 
-            Canvas(modifier = gestureModifier) {
+            Canvas(modifier = gestureModifier.graphicsLayer {
+                scaleX = zoomScale; scaleY = zoomScale
+                translationX = zoomOffX; translationY = zoomOffY
+            }) {
                 @Suppress("UNUSED_EXPRESSION") renderTick
-                cachedBitmap?.let { drawImage(it.asImageBitmap()) } ?: drawRect(color = backgroundColor)
+                // Animering
+                if (drawMode == DrawMode.ANIMATION) {
+                    drawRect(color = backgroundColor)
+                    if (animFrames.isNotEmpty()) {
+                        val fi = animFrame.coerceIn(0, animFrames.size - 1)
+                        if (showOnion && fi > 0) {
+                            drawImage(animFrames[fi - 1].asImageBitmap(), alpha = 0.3f)
+                        }
+                        drawImage(animFrames[fi].asImageBitmap())
+                    }
+                    if (livePoints.size >= 2) {
+                        drawPath(buildSmoothPath(livePoints), effectiveColor(), style = Stroke(brushSize, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    }
+                } else {
+                    cachedBitmap?.let { drawImage(it.asImageBitmap()) } ?: drawRect(color = backgroundColor)
+                }
 
                 // Canvas-textur overlay
                 if (textureMode != TextureMode.NONE) {
@@ -1583,6 +1840,19 @@ fun DrawingScreen() {
                                 close()
                             }
                             drawPath(hexPath, col, style = style)
+                        }
+                        ShapeType.PENTAGON -> {
+                            val cx=(s.x+e.x)/2f; val cy=(s.y+e.y)/2f
+                            val r=min(abs(e.x-s.x),abs(e.y-s.y))/2f
+                            val pentPath = Path().apply {
+                                for (i in 0 until 5) {
+                                    val a = Math.toRadians((i * 72.0 - 90.0))
+                                    val px = cx + r * cos(a).toFloat(); val py = cy + r * sin(a).toFloat()
+                                    if (i == 0) moveTo(px, py) else lineTo(px, py)
+                                }
+                                close()
+                            }
+                            drawPath(pentPath, col, style = style)
                         }
                     }
                 }
@@ -1862,6 +2132,10 @@ fun DrawingScreen() {
                                             .background(if (symmetryH) Color(0xFFFF9F43) else Color(0xFF0F3460))
                                             .clickable { symmetryH = !symmetryH }.padding(horizontal = 5.dp, vertical = 3.dp)
                                         ) { Text("H-Sym", fontSize = 9.sp, color = Color.White) }
+                                        Box(modifier = Modifier.clip(RoundedCornerShape(5.dp))
+                                            .background(if (pressureSensitive) Color(0xFFFF9F43) else Color(0xFF0F3460))
+                                            .clickable { pressureSensitive = !pressureSensitive }.padding(horizontal = 5.dp, vertical = 3.dp)
+                                        ) { Text("Tryck", fontSize = 9.sp, color = Color.White) }
                                         listOf(TextureMode.NONE to "Ingen", TextureMode.CANVAS to "Canvas", TextureMode.PAPER to "Papper", TextureMode.KRAFT to "Kraft").forEach { (tm, lbl) ->
                                             val sel = textureMode == tm
                                             Box(modifier = Modifier.clip(RoundedCornerShape(5.dp))
@@ -1928,7 +2202,8 @@ fun DrawingScreen() {
                                     ShapeType.TRIANGLE to "^",
                                     ShapeType.STAR     to "★",
                                     ShapeType.ARROW    to "→",
-                                    ShapeType.HEXAGON  to "⬡"
+                                    ShapeType.HEXAGON  to "⬡",
+                                    ShapeType.PENTAGON to "⬠"
                                 ).forEach { (type, icon) ->
                                     val sel = selectedShape == type
                                     Box(modifier = Modifier.size(42.dp).clip(RoundedCornerShape(8.dp))
@@ -2177,6 +2452,52 @@ fun DrawingScreen() {
                     }
                 }
 
+                DrawMode.ANIMATION -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // Navigering + spela
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Frame ${animFrame + 1}/${animFrames.size.coerceAtLeast(1)}", fontSize = 12.sp, color = Color(0xFFAAAAAA), modifier = Modifier.weight(1f))
+                            // Föregående frame
+                            Box(modifier = Modifier.clip(RoundedCornerShape(5.dp)).background(Color(0xFF0F3460))
+                                .clickable { if (animFrames.isNotEmpty()) animFrame = (animFrame - 1 + animFrames.size) % animFrames.size; renderTick++ }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)) { Text("◀", fontSize = 12.sp, color = Color.White) }
+                            // Nästa frame
+                            Box(modifier = Modifier.clip(RoundedCornerShape(5.dp)).background(Color(0xFF0F3460))
+                                .clickable { if (animFrames.isNotEmpty()) animFrame = (animFrame + 1) % animFrames.size; renderTick++ }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)) { Text("▶", fontSize = 12.sp, color = Color.White) }
+                            // Spela/pausa
+                            Box(modifier = Modifier.clip(RoundedCornerShape(5.dp))
+                                .background(if (animPlaying) Color(0xFFFF9F43) else Color(0xFF0BE881))
+                                .clickable { animPlaying = !animPlaying }.padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) { Text(if (animPlaying) "⏸" else "▶ Spela", fontSize = 11.sp, color = Color.White) }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            // Ny frame
+                            Button(onClick = {
+                                val newFrame = android.graphics.Bitmap.createBitmap(
+                                    canvasWidth.coerceAtLeast(1), canvasHeight.coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
+                                animFrames.add(newFrame); animFrame = animFrames.size - 1; renderTick++
+                            }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), modifier = Modifier.height(32.dp)) { Text("+ Frame", fontSize = 10.sp) }
+                            // Onion skin
+                            Box(modifier = Modifier.clip(RoundedCornerShape(5.dp))
+                                .background(if (showOnion) Color(0xFF5F27CD) else Color(0xFF0F3460))
+                                .clickable { showOnion = !showOnion }.padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) { Text("Onion", fontSize = 10.sp, color = Color.White) }
+                            // Spara frame
+                            Button(onClick = {
+                                if (animFrames.isNotEmpty()) saveToGallery(context, animFrames[animFrame.coerceIn(0, animFrames.size-1)])
+                            }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), modifier = Modifier.height(32.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0BE881))) { Text("Spara frame", fontSize = 10.sp) }
+                        }
+                        // FPS
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("FPS: $animFps", fontSize = 11.sp, color = Color(0xFFAAAAAA), modifier = Modifier.width(60.dp))
+                            Slider(value = animFps.toFloat(), onValueChange = { animFps = it.toInt() }, valueRange = 4f..24f,
+                                modifier = Modifier.weight(1f), colors = SliderDefaults.colors(thumbColor = Color(0xFF5F27CD), activeTrackColor = Color(0xFF5F27CD)))
+                        }
+                    }
+                }
+
             }
 
             // Rutnätspanel (visas när showGridPanel är true)
@@ -2299,6 +2620,25 @@ private fun saveToGallery(context: Context, bitmap: android.graphics.Bitmap?) {
         uri?.let {
             context.contentResolver.openOutputStream(it)?.use { s -> bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, s) }
             Toast.makeText(context, "Sparad i Bilder/Rita!", Toast.LENGTH_SHORT).show()
+        } ?: Toast.makeText(context, "Kunde inte spara", Toast.LENGTH_SHORT).show()
+    } catch (e: Exception) {
+        Toast.makeText(context, "Fel vid sparande", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun saveToGalleryJpg(context: Context, bitmap: android.graphics.Bitmap?) {
+    if (bitmap == null) { Toast.makeText(context, "Rita nagot forst!", Toast.LENGTH_SHORT).show(); return }
+    try {
+        val filename = "Rita_${System.currentTimeMillis()}.jpg"
+        val cv = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Rita")
+        }
+        val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+        uri?.let {
+            context.contentResolver.openOutputStream(it)?.use { s -> bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, s) }
+            Toast.makeText(context, "Sparad som JPG i Bilder/Rita!", Toast.LENGTH_SHORT).show()
         } ?: Toast.makeText(context, "Kunde inte spara", Toast.LENGTH_SHORT).show()
     } catch (e: Exception) {
         Toast.makeText(context, "Fel vid sparande", Toast.LENGTH_SHORT).show()
